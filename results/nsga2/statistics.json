@@ -1,0 +1,10 @@
+{
+    "max_secrecy_rate": 1.3920272262983244,
+    "max_energy_efficiency": 0.15988824050933098,
+    "min_secrecy_rate": 0.8002027017328314,
+    "min_energy_efficiency": 0.13920272262983244,
+    "avg_secrecy_rate": 0.9841529772380831,
+    "avg_energy_efficiency": 0.14845237981628948,
+    "pareto_front_size": 14,
+    "total_generations": 100
+}
