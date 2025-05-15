@@ -1,16 +1,10 @@
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 import os
 import json
-from ppo import PPOAgent  # 替换为 PPO 版本
-
+from ppo import PPO  # 替换为 PPO 版本
 
 class SecureCommEnvironment:
-    """
-    安全通信环境模拟，用于NSGA-II训练
-    """
-
     def __init__(self, state_dim=8, action_dim=4, max_steps=200):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -93,108 +87,79 @@ class SecureCommEnvironment:
         """设置训练进度，用于调整环境参数"""
         self.training_phase = episode / total_episodes
 
-
 def main():
+
     np.random.seed(42)
     torch.manual_seed(42)
 
-    # 环境参数设置
     state_dim = 8
     action_dim = 4
     action_bounds = (
-        np.array([-1.0, -1.0, -1.0, -1.0]),  # 动作下限
-        np.array([1.0, 1.0, 1.0, 1.0])       # 动作上限
+        np.array([-1.0] * action_dim),
+        np.array([1.0] * action_dim)
     )
 
-    # 初始化环境
     env = SecureCommEnvironment(state_dim=state_dim, action_dim=action_dim, max_steps=200)
-
-    # 初始化 PPO agent
-    agent = PPOAgent(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        action_bounds=action_bounds,
-        gamma=0.99,
-        lam=0.95,
-        clip_eps=0.2,
-        lr=3e-4
-    )
-
-    # 训练参数
+    agent = PPO(state_dim, action_dim, action_bounds)
     num_episodes = 100
-    print("开始 PPO 算法训练...")
 
-    # 主训练循环
+    print("开始 PPO 算法训练...")
     for episode in range(num_episodes):
         env.set_training_progress(episode, num_episodes)
         state = env.reset()
-        done = False
-        episode_reward = 0
-        secrecy_rates = []
+        ep_reward = 0
+        ep_secrecy = []
+        ep_energy = 0
 
-        while not done:
-            action, logp, value = agent.select_action(state)
+        for _ in range(env.max_steps):
+            action, log_prob, value = agent.select_action(state)
             next_state, reward, done, info = env.step(action)
 
             agent.buffer.states.append(state)
             agent.buffer.actions.append(action)
-            agent.buffer.log_probs.append(logp)
-            agent.buffer.values.append(value)
             agent.buffer.rewards.append(reward)
             agent.buffer.dones.append(done)
+            agent.buffer.log_probs.append(log_prob)
+            agent.buffer.values.append(value)
 
             state = next_state
-            episode_reward += reward
-            secrecy_rates.append(info['secrecy_rate'])
+            ep_reward += reward
+            ep_secrecy.append(info.get('secrecy_rate', 0.0))
+            ep_energy = info.get('energy_remaining', 0.0)
+
+            if done:
+                break
 
         agent.update()
-
-        agent.rewards_log.append(episode_reward)
-        agent.sr_log.append(np.mean(secrecy_rates))
-        agent.energy_log.append(info['energy_remaining'])
+        avg_sr = np.mean(ep_secrecy)
+        agent.record_metrics(ep_reward, avg_sr, ep_energy)
 
         if episode % 5 == 0:
-            print(f"[{episode}/{num_episodes}] Reward: {episode_reward:.2f}, SR: {np.mean(secrecy_rates):.4f}, Energy: {info['energy_remaining']:.2f} J")
+            print(f"Episode {episode}/{num_episodes} | Reward: {ep_reward:.2f} | SR: {avg_sr:.4f} | Best SR: {agent.best_sr:.4f}")
 
-    # 保存训练结果
+    agent.load_best_model()
+    agent.plot_learning_curve()
+    agent.print_energy_stats()
+
     output_dir = 'results/ppo'
     os.makedirs(output_dir, exist_ok=True)
-
     results = {
-        'reward_history': agent.rewards_log,
-        'secrecy_rate_history': agent.sr_log,
-        'energy_history': agent.energy_log,
-        'final_avg_reward': np.mean(agent.rewards_log[-10:]),
-        'final_avg_secrecy_rate': max(agent.sr_log[-10:]),
-        'total_episodes': num_episodes
+        'reward_history': [float(x) for x in agent.rewards_log],
+        'avg_reward_history': [float(x) for x in agent.avg_reward_log],
+        'secrecy_rate_history': [float(x) for x in agent.sr_log],
+        'energy_history': [float(x) for x in agent.energy_log],
+        'loss_log': [float(x) for x in agent.loss_log],
+        'final_avg_reward': float(np.mean(agent.rewards_log[-10:])),
+        'final_avg_secrecy_rate': float(max(agent.sr_log[-10:])),
     }
 
     with open(f'{output_dir}/metrics.json', 'w') as f:
         json.dump(results, f, indent=4)
 
-    print(f"PPO 训练完成！结果保存在 {output_dir}/metrics.json")
-
-    # 绘图
-    plt.figure(figsize=(10, 6))
-    plt.plot(agent.rewards_log, label='Reward')
-    plt.title('PPO Training Reward Curve')
-    plt.xlabel('Episode')
-    plt.ylabel('Reward')
-    plt.grid(True)
-    plt.legend()
-    plt.savefig(f'{output_dir}/reward_curve.png')
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(agent.sr_log, label='Secrecy Rate', color='green')
-    plt.title('PPO Training Secrecy Rate Curve')
-    plt.xlabel('Episode')
-    plt.ylabel('Secrecy Rate (bps/Hz)')
-    plt.grid(True)
-    plt.legend()
-    plt.savefig(f'{output_dir}/secrecy_rate_curve.png')
-
+    print(f"PPO训练完成! 结果保存在 {output_dir}/metrics.json")
     print(f"最终平均奖励: {results['final_avg_reward']:.4f}")
     print(f"最终平均保密速率: {results['final_avg_secrecy_rate']:.4f} bps/Hz")
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()
